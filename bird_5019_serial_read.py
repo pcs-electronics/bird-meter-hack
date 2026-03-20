@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import re
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -15,6 +16,17 @@ FILTER_HZ = {
     "400k": 400e3,
     "10m": 10e6,
 }
+
+FILTER_LABELS = {
+    "4k5": "4.5 kHz",
+    "400k": "400 kHz",
+    "10m": "10 MHz",
+}
+
+FILTER_HELP = (
+    "Sensor filter bandwidth. Accepts 4k5 / 4.5kHz / 4500, "
+    "400k / 400kHz / 400000, or 10m / 10MHz / 10000000."
+)
 
 UNITS = {
     "00": "None",
@@ -63,6 +75,41 @@ def default_port() -> str:
     raise SystemExit("No serial adapter found. Pass --port explicitly.")
 
 
+def parse_filter_name(value: str) -> str:
+    normalized = value.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+    aliases = {
+        "4k5": "4k5",
+        "4.5k": "4k5",
+        "4.5khz": "4k5",
+        "4500": "4k5",
+        "4500hz": "4k5",
+        "400k": "400k",
+        "400khz": "400k",
+        "400000": "400k",
+        "400000hz": "400k",
+        "10m": "10m",
+        "10.0m": "10m",
+        "10mhz": "10m",
+        "10000000": "10m",
+        "10000000hz": "10m",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+
+    suffix_stripped = normalized[:-2] if normalized.endswith("hz") else normalized
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)([km]?)", suffix_stripped)
+    if match:
+        magnitude = float(match.group(1))
+        scale = {"": 1.0, "k": 1e3, "m": 1e6}[match.group(2)]
+        hz = magnitude * scale
+        for name, expected_hz in FILTER_HZ.items():
+            if abs(hz - expected_hz) < 1.0:
+                return name
+
+    supported = ", ".join(f"{name} ({label})" for name, label in FILTER_LABELS.items())
+    raise argparse.ArgumentTypeError(f"unsupported filter bandwidth {value!r}; use one of: {supported}")
+
+
 class Bird5012FamilySerialSensor:
     def __init__(self, port: str, baudrate: int = 9600, timeout: float = 2.0) -> None:
         self.port = port
@@ -94,7 +141,7 @@ class Bird5012FamilySerialSensor:
         data = self.serial.read_until(marker)
         if not data:
             raise BirdSerialError(
-                "no response from sensor on RS-232; verify the sensor has external 7-18 VDC power, "
+                "No response from sensor on RS-232; verify the sensor has external 7-18 VDC power, "
                 "that the adapter is true RS-232 level, and that TX/RX are wired correctly"
             )
         return data
@@ -108,7 +155,7 @@ class Bird5012FamilySerialSensor:
             data = self.serial.read_until(b"rs232\r\n")
         if not data:
             raise BirdSerialError(
-                "no identification response; Bird's RS-232 method requires external 7-18 VDC power"
+                "No identification response; Bird's RS-232 method requires external 7-18 VDC power"
             )
 
         text = data.decode("utf-8", errors="ignore")
@@ -175,7 +222,10 @@ class Bird5012FamilySerialSensor:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Read forward and reflected power from a Bird 5019 over RS-232.")
+    parser = argparse.ArgumentParser(
+        description="Read forward and reflected power from a Bird 5019 over RS-232.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("--port", default=None, help="Serial device path, for example /dev/ttyUSB0")
     parser.add_argument("--baud", type=int, default=9600, help="Baud rate")
     parser.add_argument("--timeout", type=float, default=2.0, help="Serial read timeout in seconds")
@@ -186,7 +236,15 @@ def main() -> int:
         help="Number of samples to read; omit for continuous output",
     )
     parser.add_argument("--interval", type=float, default=0.35, help="Delay between samples in seconds")
-    parser.add_argument("--filter", choices=sorted(FILTER_HZ), default="400k", help="Sensor filter bandwidth")
+    parser.add_argument(
+        "--filter",
+        "--filter-bandwidth",
+        dest="filter_name",
+        type=parse_filter_name,
+        metavar="BANDWIDTH",
+        default="4k5",
+        help=FILTER_HELP,
+    )
     parser.add_argument("--json", action="store_true", help="Emit one JSON object per sample")
     parser.add_argument("--list-ports", action="store_true", help="List serial ports and exit")
     args = parser.parse_args()
@@ -201,7 +259,7 @@ def main() -> int:
     try:
         ident, serial_number = sensor.identify()
         cal_cmd, cal_state = sensor.calibration_status()
-        cfg_cmd, cfg_filter, cfg_state = sensor.configure(filter_name=args.filter)
+        cfg_cmd, cfg_filter, cfg_state = sensor.configure(filter_name=args.filter_name)
 
         print(f"sensor={ident},serial={serial_number}")
         print(f"calibration={cal_cmd},{cal_state}")

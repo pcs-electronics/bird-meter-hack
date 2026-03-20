@@ -60,6 +60,20 @@ Read from a specific port:
 python3 bird_5019_serial_read.py --port /dev/ttyUSB0
 ```
 
+Change the sensor filter bandwidth:
+
+```bash
+python3 bird_5019_serial_read.py --port /dev/ttyUSB0 --filter 400k
+python3 bird_5019_serial_read.py --port /dev/ttyUSB0 --filter 400khz
+python3 bird_5019_serial_read.py --port /dev/ttyUSB0 --filter 10mhz
+```
+
+Supported filter values are:
+
+- `4k5`, `4.5khz`, or `4500` for 4.5 kHz
+- `400k`, `400khz`, or `400000` for 400 kHz
+- `10m`, `10mhz`, or `10000000` for 10 MHz
+
 Read a limited number of samples in JSON format:
 
 ```bash
